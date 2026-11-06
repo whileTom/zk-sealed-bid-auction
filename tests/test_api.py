@@ -229,8 +229,18 @@ def test_bid_missing_nullifier_is_422(client, auction, wallets):
     assert r.status_code == 422
 
 
-def test_description_stored_verbatim(client, clock):
-    payload = "<script>alert(1)</script>"
-    r = client.post("/auction", json={"item_name": "x", "description": payload,
-                                      "bid_deadline": (clock.now() + timedelta(seconds=30)).isoformat()})
-    assert r.json()["description"] == payload  # the UI must render it with textContent
+def test_html_markup_is_stripped_but_text_kept(client, clock):
+    deadline = (clock.now() + timedelta(seconds=30)).isoformat()
+    cases = [
+        ("Lamp <b>bold</b>", "<img src=x onerror=alert(1)> desc", "Lamp bold", "desc"),
+        ("<i>Vintage</i> brass lamp", "<script>alert(1)</script>Works", "Vintage brass lamp", "Works"),
+        ("Desk", "<STYLE>body{}</STYLE>Teak <SCRIPT src=x>", "Desk", "Teak"),
+        ("Bolts size < 5", "fits 3 < x and y > 2", "Bolts size < 5", "fits 3 < x and y > 2"),
+        ("Chair", "<!-- hidden --> <p>Oak</p>", "Chair", "Oak"),
+    ]
+    for name, desc, want_name, want_desc in cases:
+        r = client.post("/auction", json={"item_name": name, "description": desc, "bid_deadline": deadline})
+        assert r.status_code == 201, r.text
+        assert (r.json()["item_name"], r.json()["description"]) == (want_name, want_desc)
+    r = client.post("/auction", json={"item_name": "<b></b>", "description": "", "bid_deadline": deadline})
+    assert r.status_code == 422 and code(r) == "VALIDATION_ERROR"

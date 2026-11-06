@@ -1,5 +1,6 @@
 """Pydantic request/response models (wire format). Shape validation only; cryptographic
 validation happens in zkauction.crypto."""
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -20,6 +21,19 @@ def _utc(v: Optional[datetime]) -> Optional[datetime]:
         raise ValueError("datetime out of range") from None
 
 
+# Tag-shaped markup only: "<b>", "</b>", "<img src=x ...>", "<!-- ... -->". Plain comparisons such as
+# "size < 5 and > 3" are left alone because a tag must start with a letter (or "/" + letter).
+# <script>/<style> blocks are code, not text, so they are removed together with their contents.
+_TAG = re.compile(r"<(script|style)\b[^>]*>.*?(</\1\s*>|$)|<!--.*?(-->|$)|</?[A-Za-z][^<>]*>",
+                  re.DOTALL | re.IGNORECASE)
+
+
+def strip_markup(text: str) -> str:
+    """Remove HTML tags (the formatting code) but keep the text between them, then tidy spaces.
+    'Lamp <b>bold</b>' -> 'Lamp bold'; '<img src=x onerror=alert(1)> desc' -> 'desc'."""
+    return re.sub(r"[ \t]{2,}", " ", _TAG.sub(" ", text)).strip()
+
+
 class AuctionCreate(BaseModel):
     item_name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=1000)
@@ -27,6 +41,16 @@ class AuctionCreate(BaseModel):
     reveal_deadline: Optional[datetime] = None
 
     _norm = field_validator("bid_deadline", "reveal_deadline")(_utc)
+
+    @field_validator("item_name", "description")
+    @classmethod
+    def _no_markup(cls, v: str, info):
+        # Defense in depth: the UI renders text with textContent anyway, but stored auction data
+        # stays free of HTML for every client of the API.
+        cleaned = strip_markup(v)
+        if info.field_name == "item_name" and not cleaned:
+            raise ValueError("item_name must contain text, not only HTML markup")
+        return cleaned
 
 
 class AuctionOut(BaseModel):

@@ -197,7 +197,9 @@ Measured on a Ryzen 7 6800H: proving about 0.6 s (Python and browser), verifying
 - Bids stay confidential before the deadline: the server only receives commitments and ZK proofs,
   `GET /auction/{id}/bids` returns 409 until the deadline, and errors never echo request bodies.
 - The UI renders all server data with `textContent` and `/ui` is served with a strict Content-Security-Policy,
-  because an XSS bug would leak the bids stored in `localStorage`.
+  because an XSS bug would leak the bids stored in `localStorage`. In addition, HTML tags are stripped
+  from `item_name` and `description` when an auction is created (`Lamp <b>bold</b>` is stored as
+  `Lamp bold`; `<script>`/`<style>` blocks are removed entirely; plain `<` / `>` comparisons are kept).
 - The server is trusted not to censor bids (a real chain removes that trust). A bid's arrival time is
   stamped when the request reaches the server, before it waits for proof verification, so load cannot
   push an honest bid past the deadline. There is no rate limiting; a public deployment would add it,
