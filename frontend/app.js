@@ -485,6 +485,12 @@ function reconcileReceipt(d) {
   if (r.status === 'pending' && Array.isArray(d.sealed_bids)) {
     if (d.sealed_bids.some((s) => sameHex(s.bidder, w.address) && sameHex(s.commitment, r.commitment))) {
       putReceipt(key, { ...r, status: 'confirmed' });
+    } else if (!d.sealed_bids.some((s) => sameHex(s.bidder, w.address))) {
+      // No submit is in flight (state.busy is false) and the server has no bid from this address:
+      // the earlier request never arrived. Drop the stale receipt so the identity is not locked out.
+      deleteReceipt(key);
+      state.flash[key] = 'Your earlier bid never reached the server' +
+        (d.phase === 'bidding' ? '; you can bid again.' : ' before the deadline, so it does not count.');
     }
   } else if (r.status === 'confirmed' && state.bids && Array.isArray(state.bids.revealed)) {
     if (state.bids.revealed.some((x) => sameHex(x.bidder, w.address) && sameHex(x.commitment, r.commitment))) {
@@ -713,8 +719,13 @@ async function submitBid(d, rawValue) {
     state.flash[key] = 'Bid sealed. Commitment: ' + hexPrefix(secret.commitment) + '...';
     toast(state.flash[key], 'success');
   } catch (e) {
-    if (saved) deleteReceipt(key);
-    toast('Bid failed: ' + e.message, 'error');
+    // Only discard the opening when the server definitely rejected the bid. On a network error,
+    // a 5xx, or DUPLICATE_* the server may already hold this commitment; keep the receipt
+    // "pending" so reconcileReceipt() can confirm it (or clean it up if it never arrived).
+    const maybeStored = e.status === 0 || e.status >= 500 ||
+      e.code === 'DUPLICATE_BID' || e.code === 'DUPLICATE_COMMITMENT';
+    if (saved && !maybeStored) deleteReceipt(key);
+    toast('Bid failed: ' + e.message + (saved && maybeStored ? ' (receipt kept until the server state is known)' : ''), 'error');
   } finally {
     setBusy(false);
   }

@@ -12,7 +12,7 @@ mimetypes.add_type("text/javascript", ".mjs")
 
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
-from fastapi.responses import JSONResponse, RedirectResponse  # noqa: E402
+from fastapi.responses import JSONResponse, RedirectResponse, Response  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 
@@ -72,6 +72,10 @@ def create_app(clock=None, store=None) -> FastAPI:
     @app.get("/", include_in_schema=False)
     def _root():
         return RedirectResponse("/ui/")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def _favicon():
+        return Response(status_code=204)  # no icon; avoids a 404 console error on every page load
 
     if FRONTEND.is_dir():
         app.mount("/ui", StaticFiles(directory=FRONTEND, html=True), name="ui")

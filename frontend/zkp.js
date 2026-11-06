@@ -197,7 +197,8 @@ export const addressOf = (pk) => '0x' + bytesToHex(sha256(intToBytes(pk, 256))).
 // ------------------------------------------------------------------ range proof (prover)
 export function coeffs(lo, hi) {
   const D = hi - lo;
-  if (D < 1) throw new Error('empty range');
+  if (!Number.isInteger(D) || D < 1) throw new Error('empty range');
+  if (D >= 2 ** 30) throw new Error('range too wide for 32-bit weights'); // JS bit ops are 32-bit
   const k = D.toString(2).length;
   const c = [];
   for (let i = 0; i < k - 1; i++) c.push(1 << i);
@@ -333,8 +334,10 @@ export async function makeReveal({ auctionId, sk, value, randomness, commitment 
 
 /** Anyone can check a published opening: G^value * H^randomness == commitment. */
 export function verifyOpening(commitmentHex, value, randomnessHex) {
-  const v = Number(value);
-  if (!Number.isInteger(v) || v < BID_MIN || v > BID_MAX) return false;
+  // Same strictness as Python verify_opening: a real integer (no "1", true, [1], "0x1").
+  if (typeof value !== 'number' || !Number.isInteger(value)) return false;
+  const v = value;
+  if (v < BID_MIN || v > BID_MAX) return false;
   const r = fromHex(randomnessHex);
   if (r >= Q) return false;
   return commit(BigInt(v), r) === fromHex(commitmentHex);
