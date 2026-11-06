@@ -192,6 +192,27 @@ def test_reveal_negative_cases(client, clock, auction, wallets):
     assert r.status_code == 409 and code(r) == "ALREADY_REVEALED"
 
 
+def test_reads_do_not_race_with_concurrent_bids(clock, wallets):
+    """GET list/detail while bids are inserted from other threads must never 500."""
+    from zkauction.main import create_app
+    client = TestClient(create_app(clock=clock))
+    deadline = clock.now() + timedelta(seconds=60)
+    aid = client.post("/auction", json={"item_name": "x", "description": "",
+                                        "bid_deadline": deadline.isoformat()}).json()["auction_id"]
+    bodies = [make_bid(aid, keygen(), 100 + i)[0] for i in range(8)]
+
+    def read(_):
+        return [client.get("/auction/%s" % aid).status_code for _ in range(30)] + \
+               [client.get("/auction").status_code for _ in range(30)]
+
+    with ThreadPoolExecutor(12) as ex:
+        writes = ex.map(lambda b: client.post("/auction/%s/bid" % aid, json=b).status_code, bodies)
+        reads = ex.map(read, range(4))
+        assert sorted(set(writes)) == [201]
+        assert {s for batch in reads for s in batch} == {200}
+    assert client.get("/auction/%s" % aid).json()["sealed_count"] == 8
+
+
 def test_winner_set_once_all_bids_revealed(client, clock, auction, wallets):
     aid = auction["auction_id"]
     s = {n: bid(client, aid, wallets[n], v)[2] for n, v in (("alice", 10), ("bob", 20))}

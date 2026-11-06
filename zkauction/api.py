@@ -65,19 +65,21 @@ def list_auctions(request: Request,
     store, clock = _state(request)
     now = clock.now()
     want = {"open": "bidding", "reveal": "reveal", "closed": "closed"}.get(status)
-    items = sorted(store.auctions.values(), key=lambda a: a.created_at, reverse=True)
-    return [_auction_out(a, now) for a in items if want is None or a.phase(now) == want]
+    with store.lock:  # snapshot while no bid/auction is being inserted
+        items = sorted(store.auctions.values(), key=lambda a: a.created_at, reverse=True)
+        return [_auction_out(a, now) for a in items if want is None or a.phase(now) == want]
 
 
 @router.get("/auction/{auction_id}", response_model=AuctionDetail, tags=["auction"])
 def get_auction(auction_id: str, request: Request):
     store, clock = _state(request)
     a = store.require(auction_id)
-    out = _auction_out(a, clock.now())
-    out["sealed_bids"] = [
-        {"bidder": b.bidder, "commitment": params.to_hex(b.commitment), "committed_at": b.committed_at}
-        for b in sorted(a.bids.values(), key=lambda b: b.seq)
-    ]
+    with store.lock:
+        out = _auction_out(a, clock.now())
+        out["sealed_bids"] = [
+            {"bidder": b.bidder, "commitment": params.to_hex(b.commitment), "committed_at": b.committed_at}
+            for b in sorted(a.bids.values(), key=lambda b: b.seq)
+        ]
     return out
 
 
@@ -96,11 +98,13 @@ def submit_reveal(auction_id: str, body: RevealIn, request: Request):
     store, clock = _state(request)
     rev = reveal.submit_reveal(store, clock.now(), auction_id, body.bidder, body.value,
                                body.randomness, body.proof.model_dump())
-    return {"bidder": rev.bidder, "value": rev.value,
-            "current_leader": reveal.leader(store.get(auction_id))}
+    with store.lock:
+        current = reveal.leader(store.get(auction_id))
+    return {"bidder": rev.bidder, "value": rev.value, "current_leader": current}
 
 
 @router.get("/auction/{auction_id}/bids", tags=["reveal"])
 def get_bids(auction_id: str, request: Request):
     store, clock = _state(request)
-    return reveal.results(store, clock.now(), auction_id)
+    with store.lock:  # consistent snapshot of bids and reveals
+        return reveal.results(store, clock.now(), auction_id)

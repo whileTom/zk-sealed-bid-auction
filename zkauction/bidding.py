@@ -48,7 +48,8 @@ def submit_bid(store: Store, received_at: datetime, auction_id: str, bidder: str
     bid past the deadline.
     """
     auction = store.require(auction_id)
-    _check_open_and_unique(auction, received_at, bidder, int(commitment_hex, 16))
+    with store.lock:  # cheap pre-check; iterating bids must not race with inserts
+        _check_open_and_unique(auction, received_at, bidder, int(commitment_hex, 16))
 
     # [ZKP-VERIFY] range proof + authorization + nullifier; raises InvalidProof (HTTP 400).
     C, pk, N = verify_bid(auction_id, bidder, commitment_hex, proof)
