@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from .crypto.bid_proof import verify_bid
 from .errors import Conflict, InvalidInput, PhaseError
 from .store import Auction, SealedBid, Store
+from .timing import SETTLE_GRACE, VERIFY_SLOTS
 
 DEFAULT_REVEAL_WINDOW = timedelta(minutes=10)
 MAX_HORIZON = timedelta(days=365)  # deadlines further out are rejected (also avoids date overflow)
@@ -39,7 +40,7 @@ def _check_open_and_unique(auction: Auction, received_at: datetime, bidder: str,
 
 
 def submit_bid(store: Store, received_at: datetime, auction_id: str, bidder: str,
-               commitment_hex: str, proof: dict) -> SealedBid:
+               commitment_hex: str, proof: dict, now_fn=None) -> SealedBid:
     """Order: 404 -> phase -> duplicates (cheap) -> proof (expensive, outside the lock)
     -> re-check duplicates (now including the proven nullifier) and insert under the lock.
 
@@ -52,9 +53,14 @@ def submit_bid(store: Store, received_at: datetime, auction_id: str, bidder: str
         _check_open_and_unique(auction, received_at, bidder, int(commitment_hex, 16))
 
     # [ZKP-VERIFY] range proof + authorization + nullifier; raises InvalidProof (HTTP 400).
-    C, pk, N = verify_bid(auction_id, bidder, commitment_hex, proof)
+    with VERIFY_SLOTS:
+        C, pk, N = verify_bid(auction_id, bidder, commitment_hex, proof)
 
     with store.lock:
+        # A bid that arrived in time but is still verifying after the settle grace is refused, so
+        # results published as final (which wait for the same grace) can never change.
+        if now_fn is not None and now_fn() >= auction.bid_deadline + SETTLE_GRACE:
+            raise PhaseError("bidding closed; verification finished too late", "BIDDING_CLOSED")
         _check_open_and_unique(auction, received_at, bidder, C, N)
         bid = SealedBid(bidder, C, pk, proof, received_at, store.next_seq(), N)
         auction.bids[bidder] = bid

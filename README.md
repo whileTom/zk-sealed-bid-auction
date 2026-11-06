@@ -97,8 +97,10 @@ Invoke-RestMethod "http://localhost:8000/auction/$($a.auction_id)/bids" | Conver
 | POST | `/auction/{id}/reveal` | reveal | `{bidder, value, randomness, proof: {commitment, auth: {R, s}}}` |
 | GET | `/auction/{id}/bids` | reveal/closed | `revealed` bids (with openings), `unrevealed` bidders, `current_leader`, `final`, `winner` |
 
-`final` is true once the leader can no longer change (every sealed bid revealed, or the reveal window
-closed); `winner` equals the leader when `final` is true and is `null` otherwise.
+`final` is true once the leader can no longer change: every sealed bid is revealed, or the reveal window
+has closed, in both cases after a 10 s settle grace (bids or reveals that arrived just before a deadline
+may still be verifying; anything still verifying after the grace is refused). `winner` equals the leader
+when `final` is true and is `null` otherwise, so a published winner never changes.
 
 Spec wording -> field: commitment -> `commitment`; bidder's address/ID -> `bidder`; ZKP -> `proof`;
 original bid value -> `value`; opening randomness -> `randomness`; reveal consistency proof -> `proof`.
@@ -200,10 +202,12 @@ Measured on a Ryzen 7 6800H: proving about 0.6 s (Python and browser), verifying
   because an XSS bug would leak the bids stored in `localStorage`. In addition, HTML tags are stripped
   from `item_name` and `description` when an auction is created (`Lamp <b>bold</b>` is stored as
   `Lamp bold`; `<script>`/`<style>` blocks are removed entirely; plain `<` / `>` comparisons are kept).
-- The server is trusted not to censor bids (a real chain removes that trust). A bid's arrival time is
-  stamped when the request reaches the server, before it waits for proof verification, so load cannot
-  push an honest bid past the deadline. There is no rate limiting; a public deployment would add it,
-  since each invalid proof still costs about 0.35 s of CPU to reject.
+- The server is trusted not to censor bids (a real chain removes that trust). Deadlines are judged by
+  when the COMPLETE request arrived (the body is read before stamping, so a request opened before the
+  deadline cannot deliver its commitment afterwards). Stamping happens before the request waits for proof
+  verification, and at most two verifications run at once, which keeps arrival stamping prompt under
+  load. Ties are broken by that arrival time. There is no rate limiting; a public deployment would add
+  it, since each invalid proof still costs about 0.35 s of CPU to reject.
 - Addresses are free to create, so "one bid per address" does not stop one person from using many
   addresses; deposits or identity would be needed.
 - Big-integer arithmetic in Python/JS is not constant-time.

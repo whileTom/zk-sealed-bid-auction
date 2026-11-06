@@ -154,6 +154,11 @@ def test_full_flow_leader_and_winner(client, clock, auction, wallets):
         assert verify_opening(int(row["commitment"], 16), row["value"], int(row["randomness"], 16))
 
     clock.advance(600)  # reveal window closes; dave forfeits
+    late = client.post("/auction/%s/reveal" % aid, json=make_reveal(aid, wallets["dave"], secrets_["dave"]))
+    assert late.status_code == 409 and code(late) == "REVEAL_CLOSED"
+    res = client.get("/auction/%s/bids" % aid).json()
+    assert res["phase"] == "closed" and res["final"] is False  # settle grace not yet over
+    clock.advance(10)
     res = client.get("/auction/%s/bids" % aid).json()
     assert res["phase"] == "closed" and res["final"] is True
     assert res["winner"] == {"bidder": wallets["bob"]["address"], "value": 700}
@@ -221,6 +226,9 @@ def test_winner_set_once_all_bids_revealed(client, clock, auction, wallets):
     assert client.get("/auction/%s/bids" % aid).json()["winner"] is None  # bob still unrevealed
     client.post("/auction/%s/reveal" % aid, json=make_reveal(aid, wallets["bob"], s["bob"]))
     res = client.get("/auction/%s/bids" % aid).json()
+    assert res["final"] is False and res["winner"] is None  # a bid may still be verifying
+    clock.advance(10)  # settle grace after the bid deadline has passed
+    res = client.get("/auction/%s/bids" % aid).json()
     assert res["phase"] == "reveal" and res["final"] is True
     assert res["winner"] == {"bidder": wallets["bob"]["address"], "value": 20}
 
@@ -241,6 +249,54 @@ def test_all_errors_use_the_envelope(client, auction):
     r = client.post("/auction/%s/bid" % auction["auction_id"], content=b"{not json",
                     headers={"Content-Type": "application/json"})
     assert r.status_code == 422 and code(r) == "VALIDATION_ERROR"
+
+
+def test_slow_body_cannot_smuggle_a_bid_past_the_deadline(clock, wallets):
+    """Headers sent before the deadline, body after: the bid must be judged by when the body
+    arrived (regression for a sealed-bid bypass found by the bug hunt)."""
+    import asyncio
+    import json as _json
+    from zkauction.main import create_app
+
+    app = create_app(clock=clock)
+    client = TestClient(app)
+    deadline = clock.now() + timedelta(seconds=60)
+    aid = client.post("/auction", json={"item_name": "x", "description": "",
+                                        "bid_deadline": deadline.isoformat()}).json()["auction_id"]
+    body = _json.dumps(make_bid(aid, wallets["alice"], 999)[0]).encode()
+    clock.advance(59.5)  # headers + first byte arrive 0.5 s before the deadline
+
+    sent = []
+    chunks = [{"type": "http.request", "body": body[:1], "more_body": True},
+              {"type": "http.request", "body": body[1:], "more_body": False}]
+
+    async def receive():
+        if len(chunks) == 1:
+            # rest of the body arrives 4.5 s after the deadline (inside the settle grace, so only
+            # the "stamp after the full body" rule can reject it)
+            clock.advance(5)
+        return chunks.pop(0) if chunks else {"type": "http.disconnect"}
+
+    async def send(msg):
+        sent.append(msg)
+
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "POST",
+             "scheme": "http", "path": "/auction/%s/bid" % aid, "raw_path": b"", "query_string": b"",
+             "root_path": "", "headers": [(b"content-type", b"application/json"),
+                                          (b"content-length", str(len(body)).encode())],
+             "client": ("test", 1), "server": ("test", 80)}
+    asyncio.run(app(scope, receive, send))
+    status = next(m["status"] for m in sent if m["type"] == "http.response.start")
+    payload = _json.loads(b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body"))
+    assert status == 409 and payload["detail"]["code"] == "BIDDING_CLOSED"
+
+
+def test_static_and_method_errors(client):
+    r = client.get("/ui/a%3Cb%3E.js")  # characters Windows cannot represent in a file name
+    assert r.status_code == 404
+    r = client.delete("/auction")
+    assert r.status_code == 405 and r.headers.get("allow")  # Allow header is passed through
+    assert code(r) == "METHOD_NOT_ALLOWED"
 
 
 def test_bid_missing_nullifier_is_422(client, auction, wallets):

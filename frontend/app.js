@@ -588,7 +588,7 @@ function renderReceipt(d) {
   if (!w) return;
   const details = el('details', { className: 'receipt' },
     el('summary', { text: 'Export receipt' }),
-    el('p', { className: 'warn small', text: 'Contains your secret opening (value + randomness). Anyone with it can reveal your bid.' }),
+    el('p', { className: 'warn small', text: 'Contains your secret opening (value + randomness). Anyone who sees it learns your bid before the deadline; revealing also needs your identity key, so keep both private.' }),
     el('textarea', { readOnly: true, rows: 8, value: json || 'No receipt for this identity in this auction.' }),
   );
   details.open = wasOpen;
@@ -695,11 +695,19 @@ async function submitBid(d, rawValue) {
   }
 
   let saved = false;
+  let mine = null; // this tab's commitment; every later receipt write is tied to it
+  const isMine = () => { const cur = getReceipt(key); return !!(cur && mine && cur.commitment === mine); };
   setBusy(true, 'Generating zero-knowledge proof...');
   await sleep(30); // let the browser paint the busy message before heavy CPU work
   try {
     const { request, secret } = await zkp.makeBid({ auctionId, sk: w.sk, value });
 
+    // Another tab may have bid with this identity while we were proving: never overwrite it.
+    if (getReceipt(key)) {
+      toast('This identity already bid in this auction (another tab).', 'error');
+      return;
+    }
+    mine = secret.commitment;
     // Save the opening BEFORE posting so a crash mid-request cannot lose it.
     putReceipt(key, {
       auction_id: auctionId,
@@ -714,7 +722,7 @@ async function submitBid(d, rawValue) {
     setBusy(true, 'Submitting sealed bid...');
     await api('POST', auctionPath(auctionId) + '/bid', request);
 
-    putReceipt(key, { ...getReceipt(key), status: 'confirmed' });
+    if (isMine()) putReceipt(key, { ...getReceipt(key), status: 'confirmed' });
     state.bidDraft = '';
     state.flash[key] = 'Bid sealed. Commitment: ' + hexPrefix(secret.commitment) + '...';
     toast(state.flash[key], 'success');
@@ -724,7 +732,7 @@ async function submitBid(d, rawValue) {
     // "pending" so reconcileReceipt() can confirm it (or clean it up if it never arrived).
     const maybeStored = e.status === 0 || e.status >= 500 ||
       e.code === 'DUPLICATE_BID' || e.code === 'DUPLICATE_COMMITMENT';
-    if (saved && !maybeStored) deleteReceipt(key);
+    if (saved && !maybeStored && isMine()) deleteReceipt(key);
     toast('Bid failed: ' + e.message + (saved && maybeStored ? ' (receipt kept until the server state is known)' : ''), 'error');
   } finally {
     setBusy(false);

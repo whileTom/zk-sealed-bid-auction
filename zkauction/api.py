@@ -78,7 +78,7 @@ def get_auction(auction_id: str, request: Request):
         out = _auction_out(a, clock.now())
         out["sealed_bids"] = [
             {"bidder": b.bidder, "commitment": params.to_hex(b.commitment), "committed_at": b.committed_at}
-            for b in sorted(a.bids.values(), key=lambda b: b.seq)
+            for b in sorted(a.bids.values(), key=lambda b: (b.committed_at, b.seq))
         ]
     return out
 
@@ -88,7 +88,7 @@ def submit_bid(auction_id: str, body: BidIn, request: Request):
     store, _ = _state(request)
     received_at = request.state.received_at  # stamped by middleware on arrival
     bid = bidding.submit_bid(store, received_at, auction_id, body.bidder, body.commitment,
-                             body.proof.model_dump())
+                             body.proof.model_dump(), now_fn=request.app.state.clock.now)
     return {"auction_id": auction_id, "bidder": bid.bidder,
             "commitment": params.to_hex(bid.commitment), "accepted_at": bid.committed_at}
 
@@ -96,8 +96,8 @@ def submit_bid(auction_id: str, body: BidIn, request: Request):
 @router.post("/auction/{auction_id}/reveal", tags=["reveal"])
 def submit_reveal(auction_id: str, body: RevealIn, request: Request):
     store, clock = _state(request)
-    rev = reveal.submit_reveal(store, clock.now(), auction_id, body.bidder, body.value,
-                               body.randomness, body.proof.model_dump())
+    rev = reveal.submit_reveal(store, request.state.received_at, auction_id, body.bidder, body.value,
+                               body.randomness, body.proof.model_dump(), now_fn=clock.now)
     with store.lock:
         current = reveal.leader(store.get(auction_id))
     return {"bidder": rev.bidder, "value": rev.value, "current_leader": current}

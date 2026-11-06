@@ -26,9 +26,21 @@ FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 CSP = "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'"
 
 
-def _error(status: int, code: str, message: str, **extra) -> JSONResponse:
+def _error(status: int, code: str, message: str, headers=None, **extra) -> JSONResponse:
     # Never echo request bodies (they may contain a bid value or randomness).
-    return JSONResponse(status_code=status, content={"detail": {"code": code, "message": message, **extra}})
+    return JSONResponse(status_code=status, content={"detail": {"code": code, "message": message, **extra}},
+                        headers=headers)
+
+
+class _SafeStaticFiles(StaticFiles):
+    """StaticFiles that answers 404 (not 500) for names the OS cannot represent, e.g. Windows
+    paths with <>:"|?* or over-long names."""
+
+    def lookup_path(self, path):
+        try:
+            return super().lookup_path(path)
+        except (OSError, ValueError):
+            return "", None
 
 
 def create_app(clock=None, store=None) -> FastAPI:
@@ -55,12 +67,18 @@ def create_app(clock=None, store=None) -> FastAPI:
     def _http(_: Request, exc: StarletteHTTPException):
         # 404 unknown route, 405 wrong method, 400 unparsable body: same envelope as domain errors.
         codes = {400: "BAD_REQUEST", 404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
-        return _error(exc.status_code, codes.get(exc.status_code, "HTTP_ERROR"), str(exc.detail))
+        return _error(exc.status_code, codes.get(exc.status_code, "HTTP_ERROR"), str(exc.detail),
+                      headers=getattr(exc, "headers", None))  # keeps Allow on 405
 
     @app.middleware("http")
     async def _stamp_and_csp(request: Request, call_next):
-        # Stamp arrival time on the event loop, before the request waits for a worker thread,
-        # so the bid deadline is judged by when the bid reached the server.
+        # Arrival time = when the COMPLETE request reached the server. The body is read first
+        # (Starlette caches it for the route): stamping on headers alone would let a bidder open a
+        # request before the deadline and send the commitment after seeing the reveals.
+        # Stamping happens on the event loop, before the request waits for a worker thread, so
+        # slow proof verification of other bids does not push an honest bid past the deadline.
+        if request.method in ("POST", "PUT", "PATCH"):
+            await request.body()
         request.state.received_at = request.app.state.clock.now()
         response = await call_next(request)
         if request.url.path.startswith("/ui"):
@@ -78,7 +96,7 @@ def create_app(clock=None, store=None) -> FastAPI:
         return Response(status_code=204)  # no icon; avoids a 404 console error on every page load
 
     if FRONTEND.is_dir():
-        app.mount("/ui", StaticFiles(directory=FRONTEND, html=True), name="ui")
+        app.mount("/ui", _SafeStaticFiles(directory=FRONTEND, html=True), name="ui")
     return app
 
 
