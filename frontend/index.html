@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZK Sealed-Bid Auction</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>ZK Sealed-Bid Auction <span class="tag">prototype</span></h1>
+  </header>
+
+  <!-- Shown only when zkp.init() fails (param mismatch, missing crypto.subtle, ...) -->
+  <div id="zk-banner" class="banner" role="alert" hidden></div>
+
+  <main class="layout">
+    <!-- Identity bar: demo wallets kept in localStorage -->
+    <section class="card identity" aria-labelledby="identity-title">
+      <h2 id="identity-title">Identity <span class="tag warn">demo wallet</span></h2>
+      <p class="muted small">
+        Keys are stored unencrypted in this browser's localStorage. Prototype only - never use real keys here.
+      </p>
+      <div class="identity-row">
+        <label class="field">
+          <span>Active identity</span>
+          <select id="wallet-select"></select>
+        </label>
+        <form id="wallet-form" class="inline-form" autocomplete="off">
+          <label class="field">
+            <span>New identity name</span>
+            <input id="wallet-name" type="text" maxlength="32" placeholder="e.g. Alice" required>
+          </label>
+          <button id="wallet-create" type="submit">New identity</button>
+        </form>
+      </div>
+      <p class="small">Address: <code id="wallet-address" class="addr">(none selected)</code></p>
+    </section>
+
+    <!-- Create auction -->
+    <section class="card create" aria-labelledby="create-title">
+      <h2 id="create-title">Create auction</h2>
+      <form id="create-form" autocomplete="off">
+        <label class="field">
+          <span>Item name</span>
+          <input id="c-item" type="text" maxlength="200" required>
+        </label>
+        <label class="field">
+          <span>Description</span>
+          <textarea id="c-desc" rows="2" maxlength="2000"></textarea>
+        </label>
+        <div class="two-col">
+          <label class="field">
+            <span>Bidding ends in N seconds</span>
+            <input id="c-bid-secs" type="number" min="15" step="1" value="60" required>
+          </label>
+          <label class="field">
+            <span>Reveal window N seconds</span>
+            <input id="c-reveal-secs" type="number" min="15" step="1" value="300" required>
+          </label>
+        </div>
+        <button id="c-submit" type="submit">Create auction</button>
+      </form>
+    </section>
+
+    <!-- Auction list, grouped by server-reported phase -->
+    <section class="card list" aria-labelledby="list-title">
+      <h2 id="list-title">Auctions</h2>
+      <p id="list-error" class="error small" hidden></p>
+      <h3>Open for bidding</h3>
+      <div id="list-bidding" class="auction-group"></div>
+      <h3>Reveal phase</h3>
+      <div id="list-reveal" class="auction-group"></div>
+      <h3>Closed</h3>
+      <div id="list-closed" class="auction-group"></div>
+    </section>
+
+    <!-- Detail panel for the selected auction -->
+    <section class="card detail" aria-labelledby="detail-title">
+      <h2 id="detail-title">Auction detail</h2>
+      <p id="detail-empty" class="muted">Select an auction with "Open".</p>
+      <div id="detail-body" hidden>
+        <div id="d-header"></div>
+        <h3>Sealed commitments</h3>
+        <div id="d-sealed"></div>
+        <h3>Your bid</h3>
+        <div id="d-action"></div>
+        <div id="d-receipt"></div>
+        <div id="d-results"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Toast notifications -->
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

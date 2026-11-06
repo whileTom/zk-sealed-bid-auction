@@ -1,0 +1,6 @@
+{
+  "name": "zk-sealed-bid-auction",
+  "private": true,
+  "type": "module",
+  "description": "Only used so Node can import frontend/zkp.js in the cross-language test. No dependencies."
+}
