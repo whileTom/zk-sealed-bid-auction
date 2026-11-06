@@ -1,6 +1,6 @@
 """Reference bidder wallet (prover side) in Python.
 
-Used by the tests and scripts/demo.py, and usable as a CLI. frontend/zkp.js is the browser
+Used by the tests and usable as a CLI (see the README walkthrough). frontend/zkp.js is the browser
 port of exactly the same logic. The wallet runs on the bidder's machine: the bid value and
 randomness never leave it until the reveal phase.
 
@@ -13,7 +13,7 @@ Then POST bid.json / reveal.json to the API (e.g. curl -H "Content-Type: applica
 import argparse
 import json
 
-from zkauction.crypto import schnorr
+from zkauction.crypto import nullifier, schnorr
 from zkauction.crypto.params import BID_MAX, BID_MIN, from_hex, to_hex
 from zkauction.crypto.pedersen import commit, random_scalar
 from zkauction.crypto.range_proof import prove_range
@@ -32,12 +32,14 @@ def make_bid(auction_id: str, key: dict, value: int):
     C = commit(value, r)
     bits = prove_range(value, r, auction_id, bidder, C, BID_MIN, BID_MAX)
     R, s = schnorr.sign(sk, pk, "bid", auction_id, bidder, C)
+    nf = nullifier.prove(sk, pk, auction_id, bidder, C)
     body = {
         "bidder": bidder,
         "commitment": to_hex(C),
         "proof": {
             "range": {"bits": [{f: to_hex(v) for f, v in bp.items()} for bp in bits]},
             "auth": {"pubkey": to_hex(pk), "R": to_hex(R), "s": to_hex(s)},
+            "nullifier": {f: to_hex(v) for f, v in nf.items()},
         },
     }
     secret = {"auction_id": auction_id, "value": value, "randomness": to_hex(r), "commitment": to_hex(C)}
@@ -74,6 +76,8 @@ def _main():
     rv.add_argument("--secret", required=True)
     rv.add_argument("--out", required=True)
     a = ap.parse_args()
+    if a.cmd == "bid" and not BID_MIN <= a.value <= BID_MAX:
+        ap.error("--value must be in [%d, %d]" % (BID_MIN, BID_MAX))
 
     def dump(path, obj):
         with open(path, "w", encoding="ascii") as f:

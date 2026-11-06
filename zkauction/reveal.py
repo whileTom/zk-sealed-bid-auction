@@ -10,16 +10,9 @@ from .errors import Conflict, NotFound, PhaseError
 from .store import Auction, Reveal, Store
 
 
-def _get(store: Store, auction_id: str) -> Auction:
-    auction = store.get(auction_id)
-    if auction is None:
-        raise NotFound("auction not found", "AUCTION_NOT_FOUND")
-    return auction
-
-
 def submit_reveal(store: Store, now: datetime, auction_id: str, bidder: str, value,
                   randomness_hex: str, proof: dict) -> Reveal:
-    auction = _get(store, auction_id)
+    auction = store.require(auction_id)
     phase = auction.phase(now)
     if phase == "bidding":
         raise PhaseError("reveals open at the bid deadline", "REVEAL_NOT_OPEN")
@@ -51,7 +44,7 @@ def leader(auction: Auction):
 
 
 def results(store: Store, now: datetime, auction_id: str) -> dict:
-    auction = _get(store, auction_id)
+    auction = store.require(auction_id)
     phase = auction.phase(now)
     if phase == "bidding":
         raise PhaseError("bids are sealed until %s" % auction.bid_deadline.isoformat(), "BIDS_SEALED")
@@ -59,10 +52,12 @@ def results(store: Store, now: datetime, auction_id: str) -> dict:
     unrevealed = [b.bidder for b in sorted(auction.bids.values(), key=lambda b: b.seq)
                   if b.bidder not in auction.reveals]
     current = leader(auction)
+    # final: the leader can no longer change (window closed, or every sealed bid revealed).
+    final = phase == "closed" or not unrevealed
     return {
         "auction_id": auction_id,
         "phase": phase,
-        "final": phase == "closed" or not unrevealed,
+        "final": final,
         "sealed_count": len(auction.bids),
         "revealed": [
             {
@@ -77,5 +72,5 @@ def results(store: Store, now: datetime, auction_id: str) -> dict:
         ],
         "unrevealed": unrevealed,
         "current_leader": current,
-        "winner": current if phase == "closed" else None,
+        "winner": current if final else None,
     }

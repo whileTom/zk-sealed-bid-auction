@@ -45,16 +45,17 @@ E_MOD = 1 << 256
 HEX_LEN = 512
 
 
-def _derive_h() -> int:
-    """Hash-to-group: expand the seed with SHA-256 in counter mode, reduce mod P, square."""
+def hash_to_group(seed: bytes) -> int:
+    """Hash-to-group: expand the seed with SHA-256 in counter mode, reduce mod P, square.
+    Squaring lands in the order-Q subgroup; nobody knows the result's discrete log."""
     stream = b"".join(
-        hashlib.sha256(H_SEED + j.to_bytes(4, "big")).digest() for j in range(9)
+        hashlib.sha256(seed + j.to_bytes(4, "big")).digest() for j in range(9)
     )[:288]
     x = int.from_bytes(stream, "big") % P
     return x * x % P
 
 
-H = _derive_h()
+H = hash_to_group(H_SEED)
 
 
 def jacobi(a: int, n: int) -> int:

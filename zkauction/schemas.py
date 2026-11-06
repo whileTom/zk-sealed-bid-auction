@@ -14,7 +14,10 @@ def _utc(v: Optional[datetime]) -> Optional[datetime]:
     """Naive datetimes are interpreted as UTC; aware ones are converted to UTC."""
     if v is None:
         return v
-    return v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)
+    try:
+        return v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)
+    except OverflowError:
+        raise ValueError("datetime out of range") from None
 
 
 class AuctionCreate(BaseModel):
@@ -69,9 +72,17 @@ class BidAuth(BaseModel):
     s: str = Hex
 
 
+class NullifierProof(BaseModel):
+    N: str = Hex
+    R1: str = Hex
+    R2: str = Hex
+    s: str = Hex
+
+
 class BidProof(BaseModel):
     range: RangeProof
     auth: BidAuth
+    nullifier: NullifierProof
 
 
 class BidIn(BaseModel):

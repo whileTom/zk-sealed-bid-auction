@@ -162,15 +162,15 @@ export function fromHex(s) {
 }
 
 // ------------------------------------------------------------------ group + transcript
-function deriveH() {
-  const seed = utf8(H_SEED);
+/** Hash-to-group, identical to params.hash_to_group in Python. */
+function hashToGroup(seedBytes) {
   const blocks = [];
-  for (let j = 0; j < 9; j++) blocks.push(sha256(concat([seed, u32be(j)])));
+  for (let j = 0; j < 9; j++) blocks.push(sha256(concat([seedBytes, u32be(j)])));
   const x = bytesToInt(concat(blocks).slice(0, 288)) % P;
   return (x * x) % P;
 }
 
-export const H = deriveH();
+export const H = hashToGroup(utf8(H_SEED));
 
 /** Fiat-Shamir hash: identical encoding to zkauction/crypto/transcript.py. */
 export function hashInt(...parts) {
@@ -258,6 +258,17 @@ function sign(sk, pk, ...msg) {
   return { R: toHex(R), s: toHex(mod(k + e * sk, Q)) };
 }
 
+/** Auction-scoped nullifier N = H_a^sk with a Chaum-Pedersen proof log_G(pk) == log_Ha(N)
+ *  (see zkauction/crypto/nullifier.py): one key yields exactly one valid N per auction. */
+function proveNullifier(sk, pk, auctionId, bidder, C) {
+  const Ha = hashToGroup(utf8('zk-auction/v1/nullifier/' + auctionId));
+  const N = modpow(Ha, sk);
+  const k = randBelow(Q);
+  const R1 = modpow(G, k), R2 = modpow(Ha, k);
+  const e = hashInt('zk-auction/v1/nullifier-dleq', auctionId, bidder, C, pk, N, R1, R2) % Q;
+  return { N: toHex(N), R1: toHex(R1), R2: toHex(R2), s: toHex(mod(k + e * sk, Q)) };
+}
+
 // ------------------------------------------------------------------ public wallet API
 /** Cross-check the server's parameters against our hard-coded / re-derived ones. */
 export async function init() {
@@ -300,8 +311,9 @@ export async function makeBid({ auctionId, sk, value }) {
   const C = commit(BigInt(v), r);
   const bits = proveRange(v, r, aid, bidder, C, BID_MIN, BID_MAX);
   const auth = sign(skI, pk, 'bid', aid, bidder, C);
+  const nullifier = proveNullifier(skI, pk, aid, bidder, C);
   return {
-    request: { bidder, commitment: toHex(C), proof: { range: { bits }, auth: { pubkey: toHex(pk), R: auth.R, s: auth.s } } },
+    request: { bidder, commitment: toHex(C), proof: { range: { bits }, auth: { pubkey: toHex(pk), R: auth.R, s: auth.s }, nullifier } },
     secret: { value: v, randomness: toHex(r), commitment: toHex(C) },
   };
 }

@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
 from fastapi.responses import JSONResponse, RedirectResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
+from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 
 from .api import router  # noqa: E402
 from .clock import SystemClock  # noqa: E402
@@ -47,10 +48,20 @@ def create_app(clock=None, store=None) -> FastAPI:
     @app.exception_handler(RequestValidationError)
     def _validation(_: Request, exc: RequestValidationError):
         errors = [{"loc": list(e.get("loc", [])), "msg": e.get("msg")} for e in exc.errors()]
-        return _error(422, "VALIDATION_ERROR", "request failed schema validation", errors=errors)
+        msg = "; ".join("%s: %s" % (".".join(str(p) for p in e["loc"]), e["msg"]) for e in errors[:3])
+        return _error(422, "VALIDATION_ERROR", msg or "request failed schema validation", errors=errors)
+
+    @app.exception_handler(StarletteHTTPException)
+    def _http(_: Request, exc: StarletteHTTPException):
+        # 404 unknown route, 405 wrong method, 400 unparsable body: same envelope as domain errors.
+        codes = {400: "BAD_REQUEST", 404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
+        return _error(exc.status_code, codes.get(exc.status_code, "HTTP_ERROR"), str(exc.detail))
 
     @app.middleware("http")
-    async def _csp(request: Request, call_next):
+    async def _stamp_and_csp(request: Request, call_next):
+        # Stamp arrival time on the event loop, before the request waits for a worker thread,
+        # so the bid deadline is judged by when the bid reached the server.
+        request.state.received_at = request.app.state.clock.now()
         response = await call_next(request)
         if request.url.path.startswith("/ui"):
             response.headers["Content-Security-Policy"] = CSP

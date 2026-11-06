@@ -186,9 +186,37 @@ def bid_bundle():
 
 def test_full_bid_and_reveal(bid_bundle):
     key, body, secret = bid_bundle
-    C, pk = verify_bid("auc-1", body["bidder"], body["commitment"], body["proof"])
+    C, pk, _ = verify_bid("auc-1", body["bidder"], body["commitment"], body["proof"])
     rv = make_reveal("auc-1", key, secret)
     assert verify_reveal("auc-1", body["bidder"], C, pk, rv["value"], rv["randomness"], rv["proof"])
+
+
+def test_nullifier_is_deterministic_per_key_and_auction():
+    from zkauction.crypto import nullifier
+    sk, pk = schnorr.keygen()
+    a1 = nullifier.prove(sk, pk, "auc-A", "0x" + "11" * 20, 5)["N"]
+    a2 = nullifier.prove(sk, pk, "auc-A", "0x" + "11" * 20, 7)["N"]
+    b = nullifier.prove(sk, pk, "auc-B", "0x" + "11" * 20, 5)["N"]
+    assert a1 == a2 != b  # same key -> same N in an auction; unlinkable across auctions
+
+
+def test_forged_or_replayed_nullifier_rejected(bid_bundle):
+    from zkauction.crypto import nullifier
+    key, body, _ = bid_bundle
+    # N from a different key, with a valid DLEQ proof for THAT key: pk mismatch -> rejected
+    sk2, pk2 = schnorr.keygen()
+    C = from_hex(body["commitment"])
+    other = nullifier.prove(sk2, pk2, "auc-1", body["bidder"], C)
+    bad = copy.deepcopy(body)
+    bad["proof"]["nullifier"] = {f: to_hex(v) for f, v in other.items()}
+    with pytest.raises(InvalidProof, match="nullifier"):
+        verify_bid("auc-1", bad["bidder"], bad["commitment"], bad["proof"])
+    # nullifier proof built for another auction
+    sk, pk = from_hex(key["sk"]), from_hex(key["pk"])
+    replay = nullifier.prove(sk, pk, "auc-2", body["bidder"], C)
+    bad["proof"]["nullifier"] = {f: to_hex(v) for f, v in replay.items()}
+    with pytest.raises(InvalidProof, match="nullifier"):
+        verify_bid("auc-1", bad["bidder"], bad["commitment"], bad["proof"])
 
 
 def test_bid_rejected_for_other_address(bid_bundle):
@@ -207,7 +235,7 @@ def test_shifted_commitment_with_original_proof_rejected(bid_bundle):
 
 def test_reveal_negative_cases(bid_bundle):
     key, body, secret = bid_bundle
-    C, pk = verify_bid("auc-1", body["bidder"], body["commitment"], body["proof"])
+    C, pk, _ = verify_bid("auc-1", body["bidder"], body["commitment"], body["proof"])
     rv = make_reveal("auc-1", key, secret)
     with pytest.raises(InvalidOpening):
         verify_reveal("auc-1", body["bidder"], C, pk, rv["value"] + Q, rv["randomness"], rv["proof"])

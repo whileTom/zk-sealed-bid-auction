@@ -72,7 +72,7 @@ def list_auctions(request: Request,
 @router.get("/auction/{auction_id}", response_model=AuctionDetail, tags=["auction"])
 def get_auction(auction_id: str, request: Request):
     store, clock = _state(request)
-    a = reveal._get(store, auction_id)
+    a = store.require(auction_id)
     out = _auction_out(a, clock.now())
     out["sealed_bids"] = [
         {"bidder": b.bidder, "commitment": params.to_hex(b.commitment), "committed_at": b.committed_at}
@@ -83,8 +83,8 @@ def get_auction(auction_id: str, request: Request):
 
 @router.post("/auction/{auction_id}/bid", status_code=201, response_model=BidOut, tags=["bidding"])
 def submit_bid(auction_id: str, body: BidIn, request: Request):
-    store, clock = _state(request)
-    received_at = clock.now()  # captured before the (slow) proof verification
+    store, _ = _state(request)
+    received_at = request.state.received_at  # stamped by middleware on arrival
     bid = bidding.submit_bid(store, received_at, auction_id, body.bidder, body.commitment,
                              body.proof.model_dump())
     return {"auction_id": auction_id, "bidder": bid.bidder,

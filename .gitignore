@@ -17,6 +17,9 @@ node_modules/
 .DS_Store
 Thumbs.db
 
+# README walkthrough output (contains a private key and a bid opening)
+demo/
+
 # Local env
 .env
 .env.*

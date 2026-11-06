@@ -192,6 +192,43 @@ def test_reveal_negative_cases(client, clock, auction, wallets):
     assert r.status_code == 409 and code(r) == "ALREADY_REVEALED"
 
 
+def test_winner_set_once_all_bids_revealed(client, clock, auction, wallets):
+    aid = auction["auction_id"]
+    s = {n: bid(client, aid, wallets[n], v)[2] for n, v in (("alice", 10), ("bob", 20))}
+    clock.advance(61)
+    client.post("/auction/%s/reveal" % aid, json=make_reveal(aid, wallets["alice"], s["alice"]))
+    assert client.get("/auction/%s/bids" % aid).json()["winner"] is None  # bob still unrevealed
+    client.post("/auction/%s/reveal" % aid, json=make_reveal(aid, wallets["bob"], s["bob"]))
+    res = client.get("/auction/%s/bids" % aid).json()
+    assert res["phase"] == "reveal" and res["final"] is True
+    assert res["winner"] == {"bidder": wallets["bob"]["address"], "value": 20}
+
+
+def test_extreme_deadlines_are_422_not_500(client, clock):
+    for deadline in ("9999-12-31T23:59:59-05:00", "9999-12-31T23:55:00Z", "0001-01-01T00:00:00+05:00"):
+        r = client.post("/auction", json={"item_name": "x", "description": "", "bid_deadline": deadline})
+        assert r.status_code == 422, (deadline, r.status_code, r.text)
+        assert "code" in r.json()["detail"]
+    far = (clock.now() + timedelta(days=400)).isoformat()
+    r = client.post("/auction", json={"item_name": "x", "description": "", "bid_deadline": far})
+    assert r.status_code == 422 and code(r) == "DEADLINE_TOO_FAR"
+
+
+def test_all_errors_use_the_envelope(client, auction):
+    assert code(client.get("/no-such-route")) == "NOT_FOUND"
+    assert code(client.delete("/auction")) == "METHOD_NOT_ALLOWED"
+    r = client.post("/auction/%s/bid" % auction["auction_id"], content=b"{not json",
+                    headers={"Content-Type": "application/json"})
+    assert r.status_code == 422 and code(r) == "VALIDATION_ERROR"
+
+
+def test_bid_missing_nullifier_is_422(client, auction, wallets):
+    body, _ = make_bid(auction["auction_id"], wallets["alice"], 42)
+    del body["proof"]["nullifier"]
+    r = client.post("/auction/%s/bid" % auction["auction_id"], json=body)
+    assert r.status_code == 422
+
+
 def test_description_stored_verbatim(client, clock):
     payload = "<script>alert(1)</script>"
     r = client.post("/auction", json={"item_name": "x", "description": payload,

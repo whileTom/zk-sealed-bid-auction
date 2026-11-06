@@ -19,6 +19,7 @@ class SealedBid:
     proof: dict  # kept so anyone could re-verify the bid later
     committed_at: datetime
     seq: int  # global arrival order, used as the tie-breaker
+    nullifier: int = 0  # N = H_auction^sk, unique per key per auction
 
 
 @dataclass
@@ -61,3 +62,12 @@ class Store:
 
     def get(self, auction_id: str) -> Optional[Auction]:
         return self.auctions.get(auction_id)
+
+    def require(self, auction_id: str) -> Auction:
+        """Lookup shared by every phase; raises 404 AUCTION_NOT_FOUND."""
+        from .errors import NotFound  # local import keeps store free of HTTP concerns at import time
+
+        auction = self.auctions.get(auction_id)
+        if auction is None:
+            raise NotFound("auction not found", "AUCTION_NOT_FOUND")
+        return auction

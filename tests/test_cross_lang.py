@@ -33,7 +33,7 @@ def test_js_parameters_and_transcript_match(js_output):
 
 def test_js_bid_verifies_in_python(js_output):
     req = js_output["request"]
-    C, pk = verify_bid("auc-js", req["bidder"], req["commitment"], req["proof"])
+    C, pk, _ = verify_bid("auc-js", req["bidder"], req["commitment"], req["proof"])
     rv = js_output["reveal"]
     verify_reveal("auc-js", req["bidder"], C, pk, rv["value"], rv["randomness"], rv["proof"])
     assert js_output["opening_ok"] is True
